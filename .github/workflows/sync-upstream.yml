@@ -1,0 +1,83 @@
+name: 同步原仓库更新（保护工作流文件）
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 每天UTC 0点执行
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # 步骤1：拉取当前仓库代码（包含我们的工作流文件）
+      - name: 拉取当前仓库代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 步骤2：备份我们的工作流文件到临时目录
+      - name: 备份工作流配置文件
+        run: |
+          # 创建临时目录存储备份
+          mkdir -p .github/workflows_backup
+          # 备份当前的同步工作流文件（如果存在）
+          if [ -f ".github/workflows/sync-upstream.yml" ]; then
+            cp .github/workflows/sync-upstream.yml .github/workflows_backup/
+            echo "已备份工作流文件"
+          fi
+
+      # 步骤3：配置原仓库为上游仓库并拉取更新
+      - name: 配置上游仓库并拉取更新
+        run: |
+          git remote add upstream https://github.com/mursor1985/LIVE.git || true
+          git fetch upstream
+
+      # 步骤4：尝试合并原仓库更新
+      - name: 合并上游仓库主分支
+        id: merge_step
+        run: |
+          git checkout main
+          git merge upstream/main
+          git push origin main
+
+      # 步骤5：如果合并失败，创建备份分支并恢复工作流文件
+      - name: 同步失败时创建备份分支
+        if: failure() && steps.merge_step.outcome == 'failure'
+        run: |
+          # 创建带时间戳的备份分支
+          BACKUP_BRANCH="backup-before-reset-$(date +%Y%m%d-%H%M%S)"
+          git checkout main
+          git checkout -b $BACKUP_BRANCH
+          git push origin $BACKUP_BRANCH
+          echo "已创建备份分支: $BACKUP_BRANCH"
+
+      # 步骤6：尝试强制同步（放弃本地修改，完全同步原仓库）
+      - name: 强制同步原仓库代码
+        if: failure() && steps.merge_step.outcome == 'failure'
+        run: |
+          git checkout main
+          # 放弃本地所有修改，强制同步上游仓库
+          git reset --hard upstream/main
+          git push origin main --force
+          echo "已强制同步原仓库代码到本地main分支"
+
+      # 步骤7：恢复我们的工作流文件（关键步骤）
+      - name: 恢复工作流配置文件
+        run: |
+          # 将备份的工作流文件复制回原位置
+          if [ -f ".github/workflows_backup/sync-upstream.yml" ]; then
+            mkdir -p .github/workflows  # 确保目录存在
+            cp .github/workflows_backup/sync-upstream.yml .github/workflows/
+            # 将恢复的文件提交并推送
+            git add .github/workflows/sync-upstream.yml
+            git commit -m "恢复同步工作流配置文件" || echo "工作流文件未变更，无需提交"
+            git push origin main
+            echo "已恢复工作流文件"
+          fi
+
+      # 步骤8：最终失败提示
+      - name: 最终失败提示
+        if: failure()
+        run: |
+          echo "自动同步失败！"
+          echo "请手动查看备份分支并解决问题"

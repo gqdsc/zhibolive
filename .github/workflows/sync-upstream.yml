@@ -1,7 +1,7 @@
 name: 同步原仓库更新（保护工作流文件）
 on:
   schedule:
-    - cron: '0 6 * * *'  # 每天UTC 0点执行
+    - cron: '0 1 * * *'  # 每天UTC 0点执行
   workflow_dispatch:  # 允许手动触发
 
 jobs:
